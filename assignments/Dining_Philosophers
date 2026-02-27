@@ -1,0 +1,135 @@
+package com.mycompany.diningphilosophers;
+
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.Random;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Locale;
+
+
+public class DiningPhilosophers {
+
+    // Start time for logging timestamps
+    private static final Instant START = Instant.now();
+
+    // Number of philosophers
+    private static final int N = 5;
+
+    public static void main(String[] args) throws InterruptedException {
+        Fork[] forks = new Fork[N];
+        for (int i = 0; i < N; i++) forks[i] = new Fork(i);
+
+        
+        Semaphore butler = new Semaphore(N - 1, true);
+
+        Thread[] philosophers = new Thread[N];
+        int eatTimes = 5; // how many times each philosopher will eat (adjust as needed)
+
+        for (int i = 0; i < N; i++) {
+            Fork left = forks[i];
+            Fork right = forks[(i + 1) % N];
+            Philosopher p = new Philosopher(i + 1, left, right, butler, eatTimes);
+            philosophers[i] = new Thread(p, "Philosopher-" + (i + 1));
+            philosophers[i].start();
+        }
+
+        // Wait for all philosophers to finish
+        for (Thread t : philosophers) {
+            t.join();
+        }
+
+        log("All philosophers finished.");
+    }
+
+    // Logging helper with [MM:SS] format relative to program start
+    public static synchronized void log(String message) {
+        long seconds = ChronoUnit.SECONDS.between(START, Instant.now());
+        long minutesPart = seconds / 60;
+        long secondsPart = seconds % 60;
+        String timestamp = String.format(Locale.US, "[%02d:%02d] ", minutesPart, secondsPart);
+        System.out.println(timestamp + message);
+    }
+
+    // Fork class: fair lock
+    static class Fork {
+        private final ReentrantLock lock;
+
+        // id mainly for logging
+        private final int id;
+
+        public Fork(int id) {
+            // fair lock to reduce starvation
+            this.lock = new ReentrantLock(true);
+            this.id = id;
+        }
+
+        public void pickUp(int philosopherId, String side) {
+            lock.lock();
+            DiningPhilosophers.log("Philosopher " + philosopherId + " picked up " + side + " Fork (" + id + ").");
+        }
+
+        public void putDown(int philosopherId, String side) {
+            lock.unlock();
+            DiningPhilosophers.log("Philosopher " + philosopherId + " put down " + side + " Fork (" + id + ").");
+        }
+    }
+
+    // Philosopher runnable
+    static class Philosopher implements Runnable {
+        private final int id;
+        private final Fork leftFork;
+        private final Fork rightFork;
+        private final Semaphore butler;
+        private final Random rnd = new Random();
+        private final int eatTimes;
+
+        public Philosopher(int id, Fork leftFork, Fork rightFork, Semaphore butler, int eatTimes) {
+            this.id = id;
+            this.leftFork = leftFork;
+            this.rightFork = rightFork;
+            this.butler = butler;
+            this.eatTimes = eatTimes;
+        }
+
+        @Override
+        public void run() {
+            try {
+                for (int i = 0; i < eatTimes; i++) {
+                    think();
+                    // Request permission from the arbitrator to try picking forks
+                    butler.acquire();
+                    try {
+                        // pick forks (left then right)
+                        leftFork.pickUp(id, "Left");
+                        rightFork.pickUp(id, "Right");
+
+                        eat();
+
+                        // put down forks (right then left)
+                        rightFork.putDown(id, "Right");
+                        leftFork.putDown(id, "Left");
+                    } finally {
+                        butler.release();
+                    }
+                }
+                DiningPhilosophers.log("Philosopher " + id + " is Done (ate " + eatTimes + " times).");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                DiningPhilosophers.log("Philosopher " + id + " was interrupted.");
+            }
+        }
+
+        private void think() throws InterruptedException {
+            DiningPhilosophers.log("Philosopher " + id + " is Thinking.");
+            // random think time between 300ms and 1200ms
+            Thread.sleep(300 + rnd.nextInt(900));
+        }
+
+        private void eat() throws InterruptedException {
+            DiningPhilosophers.log("Philosopher " + id + " is Eating.");
+            // random eat time between 300ms and 900ms
+            Thread.sleep(300 + rnd.nextInt(600));
+        }
+    }
+}
