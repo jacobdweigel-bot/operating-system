@@ -1,0 +1,78 @@
+// pingpong.c
+// Build: gcc -O2 -Wall -Wextra pingpong.c -o pingpong
+// Run:   ./pingpong 5000000
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <time.h>
+
+static double now_seconds(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+int main(int argc, char **argv) {
+  long long N = 1000000;
+  if (argc >= 2) {
+    N = atoll(argv[1]);
+    if (N <= 0) {
+      fprintf(stderr, "Usage: %s [exchanges]\n", argv[0]);
+      return 1;
+    }
+  }
+
+  int p2c[2]; // parent writes, child reads
+  int c2p[2]; // child writes, parent reads
+  if (pipe(p2c) < 0) { perror("pipe p2c"); return 1; }
+  if (pipe(c2p) < 0) { perror("pipe c2p"); return 1; }
+
+  pid_t pid = fork();
+  if (pid < 0) { perror("fork"); return 1; }
+
+  if (pid == 0) {
+    // Child
+    close(p2c[1]); // close parent write end? (child doesn't write to p2c)
+    close(c2p[0]); // close parent read end? (child doesn't read from c2p)
+
+    char b;
+    for (long long i = 0; i < N; i++) {
+      if (read(p2c[0], &b, 1) != 1) { perror("child read"); _exit(1); }
+      if (write(c2p[1], &b, 1) != 1) { perror("child write"); _exit(1); }
+    }
+
+    close(p2c[0]);
+    close(c2p[1]);
+    _exit(0);
+  } else {
+    // Parent
+    close(p2c[0]); // parent doesn't read from p2c
+    close(c2p[1]); // parent doesn't write to c2p
+
+    char b = 'x';
+    double t0 = now_seconds();
+
+    for (long long i = 0; i < N; i++) {
+      if (write(p2c[1], &b, 1) != 1) { perror("parent write"); return 1; }
+      if (read(c2p[0], &b, 1) != 1) { perror("parent read"); return 1; }
+    }
+
+    double t1 = now_seconds();
+    double seconds = t1 - t0;
+
+    close(p2c[1]);
+    close(c2p[0]);
+
+    int status = 0;
+    wait(&status);
+
+    double exchanges_per_sec = (seconds > 0.0) ? ((double)N / seconds) : 0.0;
+    printf("Exchanges: %lld\n", N);
+    printf("Time (s): %.6f\n", seconds);
+    printf("Exchanges/sec: %.2f\n", exchanges_per_sec);
+
+    return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
+  }
+}
